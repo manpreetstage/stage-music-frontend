@@ -18,6 +18,20 @@ let isPlayingFromQueue = false;
 // Repeat Mode (off, all, one)
 let repeatMode = 'off'; // 'off', 'all', 'one'
 
+// Listening Milestone Tracking
+let milestonesReached = {
+    '30s': false,
+    '1min': false,
+    '2min': false,
+    '3min': false
+};
+
+// ========================================
+// NAVIGATION STACK (History Management)
+// ========================================
+let navigationStack = ['home']; // Start with home
+let isNavigating = false; // Prevent duplicate navigation
+
 // DOM Elements
 const miniPlayer = document.getElementById('mini-player');
 const fullPlayer = document.getElementById('full-player');
@@ -51,7 +65,18 @@ document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     setupBottomNavigation();
     initializeMediaSession(); // Initialize lock screen controls
+    setupNavigationHistory(); // Setup browser back button handling
 });
+
+// ========================================
+// PERFORMANCE HELPERS
+// ========================================
+
+// Lazy loading image helper
+function imgTag(src, alt, className, eager = false) {
+    const loading = eager ? 'eager' : 'loading="lazy"';
+    return `<img src="${src}" alt="${alt}" class="${className}" ${loading}>`;
+}
 
 // ========================================
 // DATA LOADING
@@ -59,22 +84,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function loadSongs() {
     try {
-        // Force fresh load with cache-busting
-        const response = await fetch(`/api/songs?_t=${Date.now()}`, {
-            cache: 'no-store',
-            headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+        // PERFORMANCE FIX: Use browser cache, only bust cache every 5 minutes
+        const cacheTime = Math.floor(Date.now() / 300000); // 5 minutes
+        const response = await fetch(`/api/songs?_t=${cacheTime}`, {
+            cache: 'default' // Allow browser caching
         });
         const data = await response.json();
         allSongs = data.songs || [];
 
         console.log('📊 Total songs loaded:', allSongs.length);
 
-        renderQuickPicks();
-        renderTop10();
-        renderCustomSections();
-        renderRegionalHits();
-        renderAlbums();
-        renderCategories();
+        // PERFORMANCE FIX: Render critical content first
+        renderQuickPicks(); // Above the fold - immediate
+        renderTop10(); // Above the fold - immediate
+
+        // Defer non-critical content rendering
+        setTimeout(() => {
+            renderCustomSections();
+            renderRegionalHits();
+        }, 100);
+
+        setTimeout(() => {
+            renderAlbums();
+            renderCategories();
+        }, 200);
+
         // renderRecentlyPlayed(); // Temporarily disabled
     } catch (error) {
         console.error('Error loading songs:', error);
@@ -640,6 +674,14 @@ function playSong(songId) {
 
     currentSong = song;
 
+    // Reset listening milestones for new song
+    milestonesReached = {
+        '30s': false,
+        '1min': false,
+        '2min': false,
+        '3min': false
+    };
+
     // Update audio source
     audioPlayer.src = song.audio_file;
     audioPlayer.play();
@@ -921,9 +963,14 @@ function playPrevious() {
 // PLAYER UI
 // ========================================
 
-function showFullPlayer() {
+function showFullPlayer(skipHistory = false) {
     fullPlayer.classList.add('active');
     document.body.style.overflow = 'hidden';
+
+    // Push to navigation history (unless coming from back button)
+    if (!skipHistory) {
+        pushNavigationState('player');
+    }
 
     // Track mini player expansion
     if (window.tracker) {
@@ -958,8 +1005,11 @@ function setupEventListeners() {
         togglePlay();
     });
 
-    // Full Player Controls
-    minimizeBtn.addEventListener('click', hideFullPlayer);
+    // Full Player Controls - Use browser back for minimize
+    minimizeBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.history.back();
+    });
     playBtnLarge.addEventListener('click', togglePlay);
     nextBtn.addEventListener('click', playNext);
     prevBtn.addEventListener('click', playPrevious);
@@ -989,10 +1039,13 @@ function setupEventListeners() {
         console.error('❌ Add to Playlist button not found!');
     }
 
-    // Category View Back Button
+    // Category View Back Button - Use browser back
     const backToHome = document.getElementById('back-to-home');
     if (backToHome) {
-        backToHome.addEventListener('click', hideCategoryView);
+        backToHome.addEventListener('click', (e) => {
+            e.preventDefault();
+            window.history.back();
+        });
     }
 
     // Search
@@ -1033,6 +1086,36 @@ function updateProgress() {
     const progressThumb = document.getElementById('progress-thumb');
     if (progressThumb) {
         progressThumb.style.left = percent + '%';
+    }
+
+    // Track listening milestones - 4 separate events
+    if (window.tracker && currentSong) {
+        const currentTime = audioPlayer.currentTime;
+        const duration = audioPlayer.duration;
+
+        // 30 seconds milestone
+        if (!milestonesReached['30s'] && currentTime >= 30) {
+            milestonesReached['30s'] = true;
+            window.tracker.trackSong30sListened(currentSong, currentTime, duration);
+        }
+
+        // 1 minute milestone
+        if (!milestonesReached['1min'] && currentTime >= 60) {
+            milestonesReached['1min'] = true;
+            window.tracker.trackSong1minListened(currentSong, currentTime, duration);
+        }
+
+        // 2 minutes milestone
+        if (!milestonesReached['2min'] && currentTime >= 120) {
+            milestonesReached['2min'] = true;
+            window.tracker.trackSong2minListened(currentSong, currentTime, duration);
+        }
+
+        // 3 minutes milestone
+        if (!milestonesReached['3min'] && currentTime >= 180) {
+            milestonesReached['3min'] = true;
+            window.tracker.trackSong3minListened(currentSong, currentTime, duration);
+        }
     }
 }
 
@@ -2322,7 +2405,7 @@ async function viewCategory(categoryIdentifier, categoryName) {
     }
 }
 
-function showCategoryView(categoryName, songs, languageOverride = null, contextType = 'category', contextId = null) {
+function showCategoryView(categoryName, songs, languageOverride = null, contextType = 'category', contextId = null, skipHistory = false) {
     const categoryView = document.getElementById('category-view');
     const categoryTitle = document.getElementById('category-view-title');
     const categoryContent = document.getElementById('category-content');
@@ -2389,12 +2472,121 @@ function showCategoryView(categoryName, songs, languageOverride = null, contextT
 
     categoryView.classList.add('active');
     document.body.style.overflow = 'hidden';
+
+    // Push to navigation history (unless coming from back button)
+    if (!skipHistory) {
+        pushNavigationState('category', {
+            categoryName,
+            songs,
+            language,
+            contextType,
+            contextId
+        });
+    }
 }
 
 function hideCategoryView() {
     const categoryView = document.getElementById('category-view');
     categoryView.classList.remove('active');
     document.body.style.overflow = '';
+}
+
+// ========================================
+// NAVIGATION HISTORY MANAGEMENT
+// ========================================
+
+function setupNavigationHistory() {
+    // Initialize with home state
+    if (!window.history.state) {
+        window.history.replaceState({ view: 'home', index: 0 }, '', window.location.href);
+    }
+
+    // Handle browser back button
+    window.addEventListener('popstate', (event) => {
+        if (isNavigating) return; // Prevent duplicate handling
+
+        const state = event.state;
+        console.log('📱 Back button pressed, state:', state);
+
+        if (!state) {
+            // No state means user is trying to leave app - prevent it
+            window.history.pushState({ view: 'home', index: 0 }, '', window.location.href);
+            navigateToView('home');
+            return;
+        }
+
+        // Navigate to the previous view
+        handleBackNavigation(state.view, state.data);
+    });
+
+    // Prevent leaving app when on home
+    window.addEventListener('beforeunload', (e) => {
+        // Only show warning if music is playing
+        if (isPlaying && currentSong) {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    });
+}
+
+function pushNavigationState(view, data = {}) {
+    const state = { view, data, index: navigationStack.length };
+    navigationStack.push(view);
+    window.history.pushState(state, '', window.location.href);
+    console.log('📱 Navigation stack:', navigationStack);
+}
+
+function handleBackNavigation(view, data = {}) {
+    isNavigating = true;
+
+    console.log('📱 Navigating back to:', view);
+
+    switch(view) {
+        case 'home':
+            // Close all views, go to home
+            hideFullPlayer();
+            hideCategoryView();
+            mainContent.style.display = 'block';
+            break;
+
+        case 'category':
+            // Close full player, show category
+            hideFullPlayer();
+            if (data.categoryName && data.songs) {
+                showCategoryView(data.categoryName, data.songs, data.language, data.contextType, data.contextId, true);
+            } else {
+                hideCategoryView();
+            }
+            break;
+
+        case 'player':
+            // Show full player
+            showFullPlayer(true);
+            break;
+
+        default:
+            // Unknown view, go home
+            hideFullPlayer();
+            hideCategoryView();
+            mainContent.style.display = 'block';
+    }
+
+    // Pop from navigation stack
+    if (navigationStack.length > 1) {
+        navigationStack.pop();
+    }
+
+    setTimeout(() => { isNavigating = false; }, 100);
+}
+
+function navigateToView(view) {
+    switch(view) {
+        case 'home':
+            hideFullPlayer();
+            hideCategoryView();
+            mainContent.style.display = 'block';
+            break;
+    }
 }
 
 // ========================================

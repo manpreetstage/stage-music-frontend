@@ -90,6 +90,63 @@
                 song_title: song.title
             });
         },
+
+        // === LISTENING MILESTONE TRACKING - 4 Separate Events ===
+        trackSong30sListened: function(song, currentTime, totalDuration) {
+            console.log('🎯 30s Milestone Reached!', song.title);
+            trackEvent('listening_milestone_30s', {
+                song_id: song.id,
+                song_title: song.title,
+                artist: song.singer,
+                language: song.language,
+                milestone: '30s',
+                current_time: Math.round(currentTime),
+                total_duration: Math.round(totalDuration),
+                completion_percentage: Math.round((currentTime / totalDuration) * 100)
+            });
+        },
+
+        trackSong1minListened: function(song, currentTime, totalDuration) {
+            console.log('🎯 1min Milestone Reached!', song.title);
+            trackEvent('listening_milestone_1min', {
+                song_id: song.id,
+                song_title: song.title,
+                artist: song.singer,
+                language: song.language,
+                milestone: '1min',
+                current_time: Math.round(currentTime),
+                total_duration: Math.round(totalDuration),
+                completion_percentage: Math.round((currentTime / totalDuration) * 100)
+            });
+        },
+
+        trackSong2minListened: function(song, currentTime, totalDuration) {
+            console.log('🎯 2min Milestone Reached!', song.title);
+            trackEvent('listening_milestone_2min', {
+                song_id: song.id,
+                song_title: song.title,
+                artist: song.singer,
+                language: song.language,
+                milestone: '2min',
+                current_time: Math.round(currentTime),
+                total_duration: Math.round(totalDuration),
+                completion_percentage: Math.round((currentTime / totalDuration) * 100)
+            });
+        },
+
+        trackSong3minListened: function(song, currentTime, totalDuration) {
+            console.log('🎯 3min Milestone Reached!', song.title);
+            trackEvent('listening_milestone_3min', {
+                song_id: song.id,
+                song_title: song.title,
+                artist: song.singer,
+                language: song.language,
+                milestone: '3min',
+                current_time: Math.round(currentTime),
+                total_duration: Math.round(totalDuration),
+                completion_percentage: Math.round((currentTime / totalDuration) * 100)
+            });
+        },
         trackSearch: function(query, resultsCount) {
             trackEvent('search_query', {
                 query: query,
