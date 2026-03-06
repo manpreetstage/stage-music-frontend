@@ -29,8 +29,9 @@ let milestonesReached = {
 // ========================================
 // NAVIGATION STACK (History Management)
 // ========================================
-let navigationStack = ['home']; // Start with home
+let navigationStack = []; // Track current view stack
 let isNavigating = false; // Prevent duplicate navigation
+let currentViewState = { view: 'home' }; // Current visible state
 
 // DOM Elements
 const miniPlayer = document.getElementById('mini-player');
@@ -84,34 +85,72 @@ function imgTag(src, alt, className, eager = false) {
 
 async function loadSongs() {
     try {
-        // PERFORMANCE FIX: Use browser cache, only bust cache every 5 minutes
+        // ULTRA FAST FOR ANDROID: Load only 15 songs initially
         const cacheTime = Math.floor(Date.now() / 300000); // 5 minutes
-        const response = await fetch(`/api/songs?_t=${cacheTime}`, {
-            cache: 'default' // Allow browser caching
+        const response = await fetch(`/api/songs?limit=15&_t=${cacheTime}`, {
+            cache: 'default'
         });
         const data = await response.json();
         allSongs = data.songs || [];
 
-        console.log('📊 Total songs loaded:', allSongs.length);
+        console.log('⚡ Initial songs loaded:', allSongs.length);
 
-        // PERFORMANCE FIX: Render critical content first
-        renderQuickPicks(); // Above the fold - immediate
-        renderTop10(); // Above the fold - immediate
+        // Render ONLY Quick Picks first (minimum content)
+        renderQuickPicks();
 
-        // Defer non-critical content rendering
-        setTimeout(() => {
-            renderCustomSections();
-            renderRegionalHits();
-        }, 100);
+        // Hide loading screen ASAP
+        hideLoadingScreen();
 
+        // Render other critical content with delay
+        setTimeout(() => renderTop10(), 100);
+
+        // Load remaining songs in background
+        setTimeout(() => loadRemaingSongs(), 500);
+
+        // Defer non-critical content more aggressively
+        setTimeout(() => renderCustomSections(), 1000);
+        setTimeout(() => renderRegionalHits(), 1500);
         setTimeout(() => {
             renderAlbums();
             renderCategories();
-        }, 200);
+        }, 2000);
 
-        // renderRecentlyPlayed(); // Temporarily disabled
     } catch (error) {
         console.error('Error loading songs:', error);
+        hideLoadingScreen();
+    }
+}
+
+async function loadRemaingSongs() {
+    try {
+        const cacheTime = Math.floor(Date.now() / 300000);
+        const response = await fetch(`/api/songs?offset=15&_t=${cacheTime}`, {
+            cache: 'default'
+        });
+        const data = await response.json();
+        const moreSongs = data.songs || [];
+
+        allSongs = [...allSongs, ...moreSongs];
+        console.log('📊 All songs loaded:', allSongs.length);
+
+        // Re-render sections with all songs
+        renderCustomSections();
+        renderRegionalHits();
+        renderAlbums();
+        renderCategories();
+    } catch (error) {
+        console.error('Error loading remaining songs:', error);
+    }
+}
+
+function hideLoadingScreen() {
+    const loadingScreen = document.getElementById('loading-screen');
+    if (loadingScreen) {
+        loadingScreen.style.opacity = '0';
+        loadingScreen.style.transition = 'opacity 0.3s';
+        setTimeout(() => {
+            loadingScreen.style.display = 'none';
+        }, 300);
     }
 }
 
@@ -2496,97 +2535,66 @@ function hideCategoryView() {
 // ========================================
 
 function setupNavigationHistory() {
-    // Initialize with home state
-    if (!window.history.state) {
-        window.history.replaceState({ view: 'home', index: 0 }, '', window.location.href);
-    }
+    console.log('🔧 Setting up navigation history...');
 
-    // Handle browser back button
+    // Initialize with home state - this ensures we have a starting point
+    history.replaceState({ view: 'home' }, '');
+
+    // Add a marker state so we know when we've reached the start
+    history.pushState({ view: 'home', isStart: true }, '');
+
+    // Handle browser/device back button
     window.addEventListener('popstate', (event) => {
-        if (isNavigating) return; // Prevent duplicate handling
-
-        const state = event.state;
-        console.log('📱 Back button pressed, state:', state);
-
-        if (!state) {
-            // No state means user is trying to leave app - prevent it
-            window.history.pushState({ view: 'home', index: 0 }, '', window.location.href);
-            navigateToView('home');
+        if (isNavigating) {
+            console.log('⏭️ Already navigating, skip');
             return;
         }
 
-        // Navigate to the previous view
-        handleBackNavigation(state.view, state.data);
+        const state = event.state;
+        console.log('🔙 BACK pressed! State:', state);
+
+        isNavigating = true;
+
+        // Check what's currently visible
+        const isPlayerOpen = fullPlayer.classList.contains('active');
+        const isCategoryOpen = document.getElementById('category-view').classList.contains('active');
+
+        console.log('📱 Player:', isPlayerOpen, 'Category:', isCategoryOpen);
+
+        if (isPlayerOpen) {
+            // Close player, stay on current page
+            console.log('→ Closing player');
+            fullPlayer.classList.remove('active');
+            document.body.style.overflow = '';
+            navigationStack.pop();
+        } else if (isCategoryOpen) {
+            // Close category, go to home
+            console.log('→ Closing category');
+            const categoryView = document.getElementById('category-view');
+            categoryView.classList.remove('active');
+            document.body.style.overflow = '';
+            navigationStack.pop();
+        } else {
+            // On home - check if we're at the start marker
+            if (state && state.isStart) {
+                console.log('→ At start, push forward to stay in app');
+                history.pushState({ view: 'home', isStart: true }, '');
+            } else {
+                console.log('→ On home, no action');
+            }
+        }
+
+        setTimeout(() => { isNavigating = false; }, 150);
     });
 
-    // Prevent leaving app when on home
-    window.addEventListener('beforeunload', (e) => {
-        // Only show warning if music is playing
-        if (isPlaying && currentSong) {
-            e.preventDefault();
-            e.returnValue = '';
-        }
-    });
+    console.log('✅ Navigation history ready');
 }
 
 function pushNavigationState(view, data = {}) {
-    const state = { view, data, index: navigationStack.length };
     navigationStack.push(view);
-    window.history.pushState(state, '', window.location.href);
-    console.log('📱 Navigation stack:', navigationStack);
-}
-
-function handleBackNavigation(view, data = {}) {
-    isNavigating = true;
-
-    console.log('📱 Navigating back to:', view);
-
-    switch(view) {
-        case 'home':
-            // Close all views, go to home
-            hideFullPlayer();
-            hideCategoryView();
-            mainContent.style.display = 'block';
-            break;
-
-        case 'category':
-            // Close full player, show category
-            hideFullPlayer();
-            if (data.categoryName && data.songs) {
-                showCategoryView(data.categoryName, data.songs, data.language, data.contextType, data.contextId, true);
-            } else {
-                hideCategoryView();
-            }
-            break;
-
-        case 'player':
-            // Show full player
-            showFullPlayer(true);
-            break;
-
-        default:
-            // Unknown view, go home
-            hideFullPlayer();
-            hideCategoryView();
-            mainContent.style.display = 'block';
-    }
-
-    // Pop from navigation stack
-    if (navigationStack.length > 1) {
-        navigationStack.pop();
-    }
-
-    setTimeout(() => { isNavigating = false; }, 100);
-}
-
-function navigateToView(view) {
-    switch(view) {
-        case 'home':
-            hideFullPlayer();
-            hideCategoryView();
-            mainContent.style.display = 'block';
-            break;
-    }
+    const state = { view, data, stack: [...navigationStack] };
+    history.pushState(state, '');
+    console.log('📍 Pushed state:', view, 'Stack:', navigationStack);
 }
 
 // ========================================
